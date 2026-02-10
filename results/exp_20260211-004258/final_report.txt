@@ -1,0 +1,6 @@
+
+    Training Finished.
+    Total Time: 0:06:50
+    Best Val Loss: 1.4622
+    Stopped at Epoch: 24
+    
