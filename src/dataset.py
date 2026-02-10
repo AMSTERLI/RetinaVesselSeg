@@ -10,52 +10,39 @@ from PIL import Image
 
 class DriveDataset(Dataset):
     def __init__(self, root_path, mode="train"):
-        """
-        Args:
-            root_path: 数据根目录 (./data/DRIVE)
-            mode: "train", "val", 或 "test"
-        """
         self.path = root_path
         self.mode = mode
         
-        # 1. 确定文件夹路径
-        # 注意：val 和 test 都读取 test 文件夹
         data_folder = "training" if mode == "train" else "test"
         
-        # 获取该文件夹下所有的图片和掩码
-        all_imgs = sorted(glob.glob(os.path.join(self.path, data_folder, 'images/*.tif')))
-        all_masks = sorted(glob.glob(os.path.join(self.path, data_folder, '1st_manual/*.gif')))
+        self.img_list = sorted(glob.glob(os.path.join(self.path, data_folder, 'images/*.tif')))
+        self.mask_list = sorted(glob.glob(os.path.join(self.path, data_folder, '1st_manual/*.gif')))
 
-        # 2. 实现数据切分逻辑 (如果是 test 文件夹，取前 5 个作为验证集)
+        # 数据切分
         if mode == "val":
-            self.img_list = all_imgs[:5]   # 前 5 个
-            self.mask_list = all_masks[:5]
+            self.img_list = self.img_list[:5]
+            self.mask_list = self.mask_list[:5]
         elif mode == "test":
-            self.img_list = all_imgs[5:]   # 5 个以后的全部作为测试
-            self.mask_list = all_masks[5:]
-        else: # train
-            self.img_list = all_imgs
-            self.mask_list = all_masks
-
-        # 3. 设置数据重复倍数 (仅训练集需要)
+            self.img_list = self.img_list[5:]
+            self.mask_list = self.mask_list[5:]
+        
+        # 训练集重复数据以增加一个 Epoch 的迭代次数
         self.repeat = 50 if mode == "train" else 1
 
-        # 4. 设置变换 (仅训练集需要数据增强)
         if mode == "train":
             self.transform = A.Compose([
                 A.RandomCrop(height=128, width=128),
                 A.HorizontalFlip(p=0.5),
                 A.VerticalFlip(p=0.5),
                 A.RandomRotate90(p=0.5),
-                A.ElasticTransform(alpha=1, sigma=50, p=0.5), 
-                A.RandomGamma(p=0.2),
-                A.GaussNoise(p=0.2),
+                A.ElasticTransform(alpha=1, sigma=50, p=0.5),
                 A.Normalize(mean=(0.5,), std=(0.5,)),
                 ToTensorV2()
             ])
         else:
-            # val 和 test 模式只做归一化，不裁剪，不做增强
+            # 【修复】验证集 Pad 到 32 的倍数，防止 UNet 拼接报错
             self.transform = A.Compose([
+                A.PadIfNeeded(min_height=None, min_width=None, pad_height_divisor=32, pad_width_divisor=32),
                 A.Normalize(mean=(0.5,), std=(0.5,)),
                 ToTensorV2()
             ])
@@ -67,15 +54,21 @@ class DriveDataset(Dataset):
         index = index % len(self.img_list)
         
         img = cv2.imread(self.img_list[index])
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) 
+        # 【优化】使用绿色通道 (G channel) 替代简单的灰度转换
+        # OpenCV 读入是 BGR，所以 G 通道是 index 1
+        img = img[:, :, 1] 
         
         mask = np.array(Image.open(self.mask_list[index]))
-        mask = (mask > 0).astype(np.float32) 
+        mask = (mask > 0).astype(np.float32) # 0, 1
 
         augmented = self.transform(image=img, mask=mask)
         img = augmented['image']
         mask = augmented['mask']
         
+        # 【修复】关键：手动增加 Channel 维度
+        # Albumentations 对灰度图返回 [H, W]，我们需要 [1, H, W]
+        if img.ndim == 2:
+            img = img.unsqueeze(0)
         if mask.ndim == 2:
             mask = mask.unsqueeze(0)
 
