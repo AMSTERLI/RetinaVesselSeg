@@ -111,4 +111,4 @@ class UNet(nn.Module):
         x = self.up4(x, x1)     # 128 -> 64
         
         logits = self.outc(x)
-        return torch.sigmoid(logits) # 输出 [0,1] 概率图
+        return logits
